@@ -1,8 +1,52 @@
-.PHONY: bb ccgx clean fetch fetch-all fetch-install install update-repos.conf sdk venus-image venus-images $(addsuffix bb-,$(MACHINES)) $(addsuffix -venus-image,$(MACHINES))
+.PHONY: bb clean clean-keep-sstate fetch fetch-all fetch-install help update-repos.conf sdk venus-image venus-images $(addsuffix bb-,$(MACHINES)) $(addsuffix -venus-image,$(MACHINES))
 
+SHELL = bash
 CONFIG ?= danny
 
 -include conf/machines
+
+help:
+	@echo "usage:"
+	@echo
+	@echo "Setup"
+	@echo "  make prereq"
+	@echo "   - Installs required host packages for Debian based distro's."
+	@echo
+	@echo "Checking out:"
+	@echo "  make CONFIG='jethro' fetch"
+	@echo "   - Downloads public available repositories needed to build for jethro."
+	@echo "  make CONFIG='jethro' fetch-all"
+	@echo "   - Downloads all repositories needed to build for jethro, needs victron git access."
+	@echo
+	@echo "  note: It is assumed you only checkout once, iow switching between CONFIGs is not"
+	@echo "        supported on purpose, since it would require resetting git branches forcefully"
+	@echo "        and that might throw away any pending, not yet pushed work."
+	@echo "        After a 'rm -rf sources && make clean' fetching should work again"
+	@echo
+	@echo "Building:"
+	@echo "  make beaglebone-venus-image"
+	@echo "   - Build an image for the beaglebone. beaglebone can be substituted by another supported machine."
+	@echo "  make venus-images"
+	@echo "   - Build images for all MACHINES supported for this CONFIG."
+	@echo ""
+	@echo "Problem resolving:"
+	@echo "  make beaglebone-bb"
+	@echo "    - Drops you to a shell with oe script being sourced and MACHINE set."
+	@echo "  make clean-keep-sstate"
+	@echo "    - Throw away the tmp / deploy dir but keep sstate (the cached build output) to quickly"
+	@echo "      repopulate them. If you run out of disk space / want to cleanup deploy this can help you.."
+	@echo "  make clean"
+	@echo "    - Throw away the tmp / deploy dir, including sstate."
+	@echo
+	@echo "Checking in:"
+	@echo "  make update-repos.conf"
+	@echo "    - Updates repos.conf to the checked out git branches. It still needs to be committed to git though."
+	@echo
+	@echo "Internals / needed when modifying whitelist etc:"
+	@echo "  make build/conf/bblayers.conf"
+	@echo "    - Creates the bblayers.conf by looking at the repositories being checkout in sources"
+	@echo "      and being in metas.whitelist, if it doesn't exist. Just remove the mentioned file if"
+	@echo "      you want to update it forcefully, it will be regenerated."
 
 build/conf/bblayers.conf:
 	@echo 'LCONF_VERSION = "6"' > build/conf/bblayers.conf
@@ -10,7 +54,7 @@ build/conf/bblayers.conf:
 	@echo 'BBFILES ?= ""' >> build/conf/bblayers.conf
 	@echo >> build/conf/bblayers.conf
 	@echo 'BBLAYERS = " \' >> build/conf/bblayers.conf
-	@find . -wholename "*/conf/layer.conf" | sed -e 's,/conf/layer.conf,,g' -e 's,^./,,g' | sort > metas.found
+	@find sources -wholename "*/conf/layer.conf" | sed -e 's,/conf/layer.conf,,g' -e 's,^./,,g' | sort > metas.found
 	@sort metas.whitelist > metas.whitelist.sorted.tmp
 	@comm -1 -2 metas.found metas.whitelist.sorted.tmp | sed -e 's,$$, \\,g' -e "s,^,$$PWD/,g" >> build/conf/bblayers.conf
 	@rm metas.whitelist.sorted.tmp
@@ -19,21 +63,20 @@ ifdef DL_DIR
 	@echo 'DL_DIR = "${DL_DIR}"' >> build/conf/bblayers.conf
 endif
 
-%-bb:
+%-bb: build/conf/bblayers.conf
 	@export BITBAKEDIR=sources/bitbake MACHINE=$(subst -bb,,$@) && bash --init-file sources/openembedded-core/oe-init-build-env
 
 bb: build/conf/bblayers.conf
 	@export BITBAKEDIR=sources/bitbake && bash --init-file sources/openembedded-core/oe-init-build-env
 
-clean:
+clean-keep-sstate:
 	@rm -rf build/tmp-eglibc
 	@rm -rf build/tmp-glibc
-	@rm -rf build/sstate-cache
 	@rm -rf deploy
 	@rm -f build/conf/bblayers.conf
 
-ccgx: build/conf/bblayers.conf
-	. ./sources/openembedded-core/oe-init-build-env build sources/bitbake && bitbake bpp3-rootfs
+clean: clean-keep-sstate
+	@rm -rf build/sstate-cache
 
 conf:
 	ln -s configs/$(CONFIG) conf
@@ -55,9 +98,6 @@ fetch-all: conf/repos.conf
 
 fetch-install:
 	git clone git@git.victronenergy.com:ccgx/install.git
-
-install:
-	@cd sources/meta-ccgx/scripts/install && make prod && make recover
 
 prereq:
 	@sudo apt-get install sed wget cvs subversion git-core \
